@@ -409,6 +409,21 @@ def safetensors_weights_iterator(
                 yield name, param
 
 
+from fastsafetensors import SafeTensorsFileLoader, SingleGroup
+def fastsafetensors_weights_iterator(
+        hf_weights_files: List[str]
+) -> Generator[Tuple[str, torch.Tensor], None, None]:
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    loader = SafeTensorsFileLoader(SingleGroup(), device)
+    loader.add_filenames({0: hf_weights_files})
+    fb = loader.copy_files_to_device()
+    keys = list(fb.key_to_rank_lidx.keys())
+    for k in keys:
+        t = fb.get_tensor(k)
+        yield k, t
+    loader.close()
+
+
 def pt_weights_iterator(
     hf_weights_files: List[str]
 ) -> Generator[Tuple[str, torch.Tensor], None, None]:

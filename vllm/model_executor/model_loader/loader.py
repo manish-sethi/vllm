@@ -343,7 +343,13 @@ class DefaultModelLoader(BaseModelLoader):
                 source.model_or_path, self.load_config.download_dir, hf_folder,
                 hf_weights_files)
         elif use_safetensors:
-            weights_iterator = safetensors_weights_iterator(hf_weights_files)
+            use_fastsafe_tensor = os.getenv('USE_FASTSAFETENSOR', 'False').lower() == 'true'
+            if use_fastsafe_tensor:
+                logger.info("Using fastsafetensor for loading weights")
+                from vllm.model_executor.model_loader.weight_utils import fastsafetensors_weights_iterator
+                weights_iterator = fastsafetensors_weights_iterator(hf_weights_files)
+            else:
+                weights_iterator = safetensors_weights_iterator(hf_weights_files)
         else:
             weights_iterator = pt_weights_iterator(hf_weights_files)
 

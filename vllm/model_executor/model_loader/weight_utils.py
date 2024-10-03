@@ -396,6 +396,14 @@ def safetensors_weights_iterator(
     hf_weights_files: List[str]
 ) -> Generator[Tuple[str, torch.Tensor], None, None]:
     """Iterate over the weights in the model safetensor files."""
+    logger.info(f'Time in loading weights with safetensor')
+    import time
+    start_time = time.time()
+    pg = torch.distributed.group.WORLD
+    logger.info(f'torch.distributed.is_initialized = {torch.distributed.is_initialized()}')
+    logger.info(f'pg.size() = {pg.size()}')
+    logger.info(f'pg.rank() = {pg.rank()}')
+    logger.info(f'torch.distributed.get_rank() = {torch.distributed.get_rank()}')
     enable_tqdm = not torch.distributed.is_initialized(
     ) or torch.distributed.get_rank() == 0
     for st_file in tqdm(
@@ -408,6 +416,107 @@ def safetensors_weights_iterator(
             for name in f.keys():  # noqa: SIM118
                 param = f.get_tensor(name)
                 yield name, param
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    logger.info(f'Time in loading weights with safetensor {elapsed_time:.4f} seconds')
+
+
+from fastsafetensors import SafeTensorsFileLoader, SingleGroup
+def fastsafetensors_weights_iterator(
+        hf_weights_files: List[str]
+) -> Generator[Tuple[str, torch.Tensor], None, None]:
+    logger.info(f'loading weights with fastsafetensors_weights_iterator')
+    import time
+    start_time = time.time()
+    pg = SingleGroup()
+    if torch.distributed.is_initialized():
+        pg = torch.distributed.group.WORLD
+
+    device = torch.device(f'cuda:{pg.rank()}' if torch.cuda.is_available() else "cpu")
+    logger.info(f'fastsafetensor copying file to {device}')
+    loader = SafeTensorsFileLoader(pg, device)
+    rank_file_map = {}
+    for i in range (pg.size()):
+        rank_file_map[i] = []
+
+    for i, f in enumerate(hf_weights_files):
+        rank_file_map[i % pg.size()].append(f)
+
+    logger.info(f'rank_file_map = {rank_file_map}')
+    loader.add_filenames(rank_file_map)    
+    fb = loader.copy_files_to_device()
+    keys = list(fb.key_to_rank_lidx.keys())
+    for k in keys:
+        t = fb.get_tensor(k)
+        yield k, t
+    fb.close()
+    loader.close()
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    logger.info(f'Time in loading weights with fastsafetensors_weights_iterator {elapsed_time:.4f} seconds')
+
+
+from fastsafetensors import SafeTensorsFileLoader, SingleGroup
+def fastsafetensors_weights_iterator_one_file_at_a_time(
+        hf_weights_files: List[str]
+) -> Generator[Tuple[str, torch.Tensor], None, None]:
+    logger.info(f'loading weights with fastsafetensors_weights_iterator_one_file_at_a_time')
+    import time
+    start_time = time.time()
+    pg = SingleGroup()
+    if torch.distributed.is_initialized():
+        pg = torch.distributed.group.WORLD
+
+    device = torch.device(f'cuda:{pg.rank()}' if torch.cuda.is_available() else "cpu")
+    weight_files_sub_lists = [hf_weights_files[i:i + pg.size()] for i in range(0, len(hf_weights_files), pg.size())]
+    
+    for f_list in weight_files_sub_lists:
+        loader = SafeTensorsFileLoader(pg, device)
+        rank_file_map = {i:[f] for i, f in enumerate(f_list)}        
+        logger.info(f'rank_file_map = {rank_file_map}')
+        loader.add_filenames(rank_file_map)    
+        fb = loader.copy_files_to_device()
+        keys = list(fb.key_to_rank_lidx.keys())
+        for k in keys:
+            t = fb.get_tensor(k)
+            yield k, t
+        fb.close()
+        loader.close()
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    logger.info(f'Time in loading weights with safetensor with fastsafetensors_weights_iterator_one_file_at_a_time {elapsed_time:.4f} seconds')
+
+from fastsafetensors import SafeTensorsFileLoader, SingleGroup
+def fastsafetensors_weights_iterator_one_file_at_a_time_with_reset(
+        hf_weights_files: List[str]
+) -> Generator[Tuple[str, torch.Tensor], None, None]:
+    logger.info(f'loading weights with fastsafetensors_weights_iterator_one_file_at_a_time_with_reset')
+    import time
+    start_time = time.time()
+    pg = SingleGroup()
+    if torch.distributed.is_initialized():
+        pg = torch.distributed.group.WORLD
+
+    device = torch.device(f'cuda:{pg.rank()}' if torch.cuda.is_available() else "cpu")
+    device = 'cpu'
+    weight_files_sub_lists = [hf_weights_files[i:i + pg.size()] for i in range(0, len(hf_weights_files), pg.size())]
+    loader = SafeTensorsFileLoader(pg, device)
+
+    for f_list in weight_files_sub_lists:
+        loader.reset()
+        rank_file_map = {i:[f] for i, f in enumerate(f_list)}        
+        logger.info(f'rank_file_map = {rank_file_map}')
+        loader.add_filenames(rank_file_map)    
+        fb = loader.copy_files_to_device()
+        keys = list(fb.key_to_rank_lidx.keys())
+        for k in keys:
+            t = fb.get_tensor(k)
+            yield k, t
+        fb.close()
+        loader.close()
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    logger.info(f'Time in loading weights with safetensor with fastsafetensors_weights_iterator_one_file_at_a_time_with_reset {elapsed_time:.4f} seconds')
 
 
 def pt_weights_iterator(
